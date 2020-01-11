@@ -27,12 +27,18 @@ func main() {
 		log.Fatalf("error in tls.LoadX509KeyPair: %s\n", err)
 	}
 
-	config := tls.Config{Certificates: []tls.Certificate{cert}, InsecureSkipVerify: true}
+	config := tls.Config{
+		Certificates:       []tls.Certificate{cert},
+		InsecureSkipVerify: true,
+		MinVersion:         tls.VersionTLS12,
+	}
 
 	listener, err := tls.Listen("tcp", localAddress, &config)
 	if err != nil {
 		log.Fatalf("error in tls.Listen: %s\n", err)
 	}
+
+	defer listener.Close()
 
 	log.Printf("local server on: %s, backend server on: %s\n", localAddress, backendAddress)
 
@@ -49,12 +55,12 @@ func main() {
 }
 
 func handle(clientConn net.Conn) {
+	defer clientConn.Close()
+
 	tlsconn, ok := clientConn.(*tls.Conn)
 	if !ok {
 		return
 	}
-
-	defer clientConn.Close()
 
 	if err := tlsconn.Handshake(); err != nil {
 		log.Printf("error in tls.Handshake: %s\n", err)
