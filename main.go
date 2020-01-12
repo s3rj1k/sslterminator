@@ -1,38 +1,99 @@
 package main
 
 import (
+	"bytes"
+	"crypto/rsa"
 	"crypto/tls"
+	"encoding/gob"
+	"errors"
 	"flag"
 	"io"
 	"log"
 	"net"
+	"regexp"
+	"strings"
 	"sync"
 
+	"github.com/garyburd/redigo/redis"
 	"github.com/pires/go-proxyproto"
 )
 
-var localAddress string
-var backendAddress string
-var certificatePath string
-var keyPath string
+const (
+	dbAddress = "127.0.0.1:6379"
+)
+
+var (
+	localAddress    string
+	backendAddress  string
+	certificatePath string
+	keyPath         string
+
+	db             *redis.Pool
+	reDomainPrefix *regexp.Regexp
+)
+
+func init() {
+	reDomainPrefix = regexp.MustCompile(`^.*?\.`)
+
+	db = &redis.Pool{
+		MaxIdle:   2,
+		MaxActive: 20,
+		Dial: func() (redis.Conn, error) {
+			return redis.Dial(
+				"tcp",
+				dbAddress,
+				redis.DialDatabase(15),
+			)
+		},
+	}
+
+	gob.RegisterName("rsa.PublicKey", rsa.PublicKey{})
+	gob.RegisterName("rsa.PrivateKey", rsa.PrivateKey{})
+}
+
+func getCertificate(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	c := db.Get()
+	defer c.Close()
+
+	crt := new(tls.Certificate)
+	exact := strings.ToLower(info.ServerName)
+	wildcard := reDomainPrefix.ReplaceAllString(exact, ".")
+
+	if data, err := redis.Bytes(
+		c.Do("GET", exact),
+	); err == nil && len(data) > 0 {
+		b := bytes.NewBuffer(data)
+
+		dec := gob.NewDecoder(b)
+		if err = dec.Decode(crt); err == nil {
+			return crt, nil
+		}
+	}
+
+	if data, err := redis.Bytes(
+		c.Do("GET", wildcard),
+	); err == nil && len(data) > 0 {
+		b := bytes.NewBuffer(data)
+
+		dec := gob.NewDecoder(b)
+		if err = dec.Decode(crt); err == nil {
+			return crt, nil
+		}
+	}
+
+	return nil, errors.New("no certificate found")
+}
 
 func main() {
 	flag.StringVar(&localAddress, "l", "89.184.72.25:443", "local address")
 	flag.StringVar(&backendAddress, "b", "89.184.72.25:80", "backend address")
-	flag.StringVar(&certificatePath, "c", "/etc/nginx/ssl/s3rj1k-54758.crt", "SSL certificate path")
-	flag.StringVar(&keyPath, "k", "/etc/nginx/ssl/s3rj1k-54758.key", "SSL key path")
 
 	flag.Parse()
 
-	cert, err := tls.LoadX509KeyPair(certificatePath, keyPath)
-	if err != nil {
-		log.Fatalf("error in tls.LoadX509KeyPair: %s\n", err)
-	}
-
 	config := tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: true,
-		MinVersion:         tls.VersionTLS12,
+		Certificates:   nil,
+		GetCertificate: getCertificate,
+		MinVersion:     tls.VersionTLS12,
 	}
 
 	listener, err := tls.Listen("tcp", localAddress, &config)
