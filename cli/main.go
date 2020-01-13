@@ -68,6 +68,7 @@ func main() {
 	c := db.Get()
 	defer c.Close()
 
+	keyPEMBlock = append(keyPEMBlock, []byte("\n")...)
 	val := append(keyPEMBlock, certPEMBlock...)
 
 	for k := range m {
