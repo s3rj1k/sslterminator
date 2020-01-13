@@ -14,6 +14,7 @@ import (
 	"log"
 	"net"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -32,6 +33,9 @@ var (
 
 	db             *redis.Pool
 	reDomainPrefix *regexp.Regexp
+
+	backendHostIP  net.IP
+	backendPortNum uint16
 )
 
 func loadCertficateAndKey(data []byte) (*tls.Certificate, error) {
@@ -135,6 +139,21 @@ func main() {
 
 	flag.Parse()
 
+	backendHost, backendPort, err := net.SplitHostPort(backendAddress)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	backendHostIP = net.ParseIP(backendHost)
+
+	var n uint64
+
+	if n, err = strconv.ParseUint(backendPort, 10, 16); err == nil {
+		backendPortNum = uint16(n)
+	} else if err != nil {
+		log.Fatal(err)
+	}
+
 	config := tls.Config{
 		Certificates:   nil,
 		GetCertificate: getCertificate,
@@ -205,8 +224,13 @@ func tunnel(from, to net.Conn, wg *sync.WaitGroup) {
 		log.Printf("error in io.Copy: %s\n", err)
 	}
 
-	to.Close()
-	from.Close()
+	if err := to.Close(); err != nil {
+		log.Printf("error in to.Close: %s\n", err)
+	}
+
+	if err := from.Close(); err != nil {
+		log.Printf("error in from.Close: %s\n", err)
+	}
 }
 
 func tunnelProxy(from, to net.Conn, wg *sync.WaitGroup) {
@@ -218,15 +242,37 @@ func tunnelProxy(from, to net.Conn, wg *sync.WaitGroup) {
 		}
 	}()
 
-	// Write out the header!
+	var (
+		rHostIP  net.IP
+		rPortNum uint16
+	)
+
+	if rHost, rPort, err := net.SplitHostPort(from.RemoteAddr().String()); err == nil {
+		rHostIP = net.ParseIP(rHost)
+
+		if n, err := strconv.ParseUint(rPort, 10, 16); err == nil {
+			rPortNum = uint16(n)
+		} else if err != nil {
+			rPortNum = 54271
+		}
+	}
+
 	header := &proxyproto.Header{
 		Version:            2,
 		Command:            proxyproto.PROXY,
 		TransportProtocol:  proxyproto.TCPv4,
-		SourceAddress:      net.ParseIP("1.1.1.1"),
-		SourcePort:         51000,
-		DestinationAddress: net.ParseIP("89.184.72.25"),
-		DestinationPort:    80,
+		SourceAddress:      rHostIP,
+		SourcePort:         rPortNum,
+		DestinationAddress: backendHostIP,
+		DestinationPort:    backendPortNum,
+	}
+
+	if isIPv4(rHostIP) {
+		header.TransportProtocol = proxyproto.TCPv4
+	}
+
+	if isIPv6(rHostIP) {
+		header.TransportProtocol = proxyproto.TCPv6
 	}
 
 	if _, err := header.WriteTo(to); err != nil {
@@ -237,6 +283,27 @@ func tunnelProxy(from, to net.Conn, wg *sync.WaitGroup) {
 		log.Printf("error in io.Copy: %s\n", err)
 	}
 
-	to.Close()
-	from.Close()
+	if err := to.Close(); err != nil {
+		log.Printf("error in to.Close: %s\n", err)
+	}
+
+	if err := from.Close(); err != nil {
+		log.Printf("error in from.Close: %s\n", err)
+	}
+}
+
+func isIPv4(ip net.IP) bool {
+	if len(ip.To4()) == net.IPv4len && strings.Contains(ip.String(), ".") {
+		return true
+	}
+
+	return false
+}
+
+func isIPv6(ip net.IP) bool {
+	if len(ip.To16()) == net.IPv6len && strings.Contains(ip.String(), ":") {
+		return true
+	}
+
+	return false
 }
