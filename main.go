@@ -1,21 +1,21 @@
 package main
 
 import (
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"regexp"
 	"strings"
 	"sync"
-	"fmt"
-	"crypto"
-	"crypto/ecdsa"
-	"crypto/rsa"
-	"crypto/tls"
-	"crypto/x509"
 
 	"github.com/garyburd/redigo/redis"
 	"github.com/pires/go-proxyproto"
@@ -25,31 +25,14 @@ const (
 	dbAddress = "127.0.0.1:6379"
 )
 
+// nolint: gochecknoglobals
 var (
-	localAddress    string
-	backendAddress  string
-	certificatePath string
-	keyPath         string
+	localAddress   string
+	backendAddress string
 
 	db             *redis.Pool
 	reDomainPrefix *regexp.Regexp
 )
-
-func init() {
-	reDomainPrefix = regexp.MustCompile(`^.*?\.`)
-
-	db = &redis.Pool{
-		MaxIdle:   2,
-		MaxActive: 20,
-		Dial: func() (redis.Conn, error) {
-			return redis.Dial(
-				"tcp",
-				dbAddress,
-				redis.DialDatabase(15),
-			)
-		},
-	}
-}
 
 func loadCertficateAndKey(data []byte) (*tls.Certificate, error) {
 	var cert tls.Certificate
@@ -67,7 +50,7 @@ func loadCertficateAndKey(data []byte) (*tls.Certificate, error) {
 
 			cert.PrivateKey, err = parsePrivateKey(block.Bytes)
 			if err != nil {
-				return nil, fmt.Errorf("Failure reading private key: %w", err)
+				return nil, fmt.Errorf("failure reading private key: %w", err)
 			}
 		}
 
@@ -75,11 +58,11 @@ func loadCertficateAndKey(data []byte) (*tls.Certificate, error) {
 	}
 
 	if len(cert.Certificate) == 0 {
-		return nil, fmt.Errorf("No certificate found")
+		return nil, fmt.Errorf("no certificate found")
 	}
 
 	if cert.PrivateKey == nil {
-		return nil, fmt.Errorf("No private key found")
+		return nil, fmt.Errorf("no private key found")
 	}
 
 	return &cert, nil
@@ -95,7 +78,7 @@ func parsePrivateKey(der []byte) (crypto.PrivateKey, error) {
 		case *rsa.PrivateKey, *ecdsa.PrivateKey:
 			return key, nil
 		default:
-			return nil, fmt.Errorf("Found unknown private key type in PKCS#8 wrapping")
+			return nil, fmt.Errorf("found unknown private key type in PKCS#8 wrapping")
 		}
 	}
 
@@ -103,7 +86,7 @@ func parsePrivateKey(der []byte) (crypto.PrivateKey, error) {
 		return key, nil
 	}
 
-	return nil, fmt.Errorf("Failed to parse private key")
+	return nil, fmt.Errorf("failed to parse private key")
 }
 
 func getCertificate(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -133,6 +116,20 @@ func getCertificate(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
 }
 
 func main() {
+	reDomainPrefix = regexp.MustCompile(`^.*?\.`)
+
+	db = &redis.Pool{
+		MaxIdle:   2,
+		MaxActive: 20,
+		Dial: func() (redis.Conn, error) {
+			return redis.Dial(
+				"tcp",
+				dbAddress,
+				redis.DialDatabase(15),
+			)
+		},
+	}
+
 	flag.StringVar(&localAddress, "l", "89.184.72.25:443", "local address")
 	flag.StringVar(&backendAddress, "b", "89.184.72.25:80", "backend address")
 
@@ -231,7 +228,10 @@ func tunnelProxy(from, to net.Conn, wg *sync.WaitGroup) {
 		DestinationAddress: net.ParseIP("89.184.72.25"),
 		DestinationPort:    80,
 	}
-	header.WriteTo(to)
+
+	if _, err := header.WriteTo(to); err != nil {
+		log.Printf("error in header.WriteTo: %s\n", err)
+	}
 
 	if _, err := io.Copy(from, to); err != nil {
 		log.Printf("error in io.Copy: %s\n", err)
