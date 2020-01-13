@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/tls"
 	"encoding/pem"
 	"errors"
 	"flag"
@@ -11,6 +10,12 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"fmt"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
 
 	"github.com/garyburd/redigo/redis"
 	"github.com/pires/go-proxyproto"
@@ -46,9 +51,8 @@ func init() {
 	}
 }
 
-func loadCertficateAndKey(data []byte) (tls.Certificate, error) {
-	certPEMBlock := make([]byte, 0, len(data))
-	keyPEMBlock := make([]byte, 0, len(data))
+func loadCertficateAndKey(data []byte) (*tls.Certificate, error) {
+	var cert tls.Certificate
 
 	for {
 		block, rest := pem.Decode(data)
@@ -57,15 +61,49 @@ func loadCertficateAndKey(data []byte) (tls.Certificate, error) {
 		}
 
 		if block.Type == "CERTIFICATE" {
-			certPEMBlock = append(certPEMBlock, block.Bytes...)
+			cert.Certificate = append(cert.Certificate, block.Bytes)
 		} else {
-			keyPEMBlock = append(keyPEMBlock, block.Bytes...)
+			var err error
+
+			cert.PrivateKey, err = parsePrivateKey(block.Bytes)
+			if err != nil {
+				return nil, fmt.Errorf("Failure reading private key: %w", err)
+			}
 		}
 
 		data = rest
 	}
 
-	return tls.X509KeyPair(certPEMBlock, keyPEMBlock)
+	if len(cert.Certificate) == 0 {
+		return nil, fmt.Errorf("No certificate found")
+	}
+
+	if cert.PrivateKey == nil {
+		return nil, fmt.Errorf("No private key found")
+	}
+
+	return &cert, nil
+}
+
+func parsePrivateKey(der []byte) (crypto.PrivateKey, error) {
+	if key, err := x509.ParsePKCS1PrivateKey(der); err == nil {
+		return key, nil
+	}
+
+	if key, err := x509.ParsePKCS8PrivateKey(der); err == nil {
+		switch key := key.(type) {
+		case *rsa.PrivateKey, *ecdsa.PrivateKey:
+			return key, nil
+		default:
+			return nil, fmt.Errorf("Found unknown private key type in PKCS#8 wrapping")
+		}
+	}
+
+	if key, err := x509.ParseECPrivateKey(der); err == nil {
+		return key, nil
+	}
+
+	return nil, fmt.Errorf("Failed to parse private key")
 }
 
 func getCertificate(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -79,7 +117,7 @@ func getCertificate(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		c.Do("GET", exact),
 	); err == nil && len(data) > 0 {
 		if crt, err := loadCertficateAndKey(data); err == nil {
-			return &crt, nil
+			return crt, nil
 		}
 	}
 
@@ -87,7 +125,7 @@ func getCertificate(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		c.Do("GET", wildcard),
 	); err == nil && len(data) > 0 {
 		if crt, err := loadCertficateAndKey(data); err == nil {
-			return &crt, nil
+			return crt, nil
 		}
 	}
 
