@@ -39,16 +39,18 @@ func main() {
 		log.Fatal(1)
 	}
 
-	crt.Leaf, err = x509.ParseCertificate(crt.Certificate[0])
+	var leaf *x509.Certificate
+
+	leaf, err = x509.ParseCertificate(crt.Certificate[0])
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	m := make(map[string]struct{})
 
-	m[strings.TrimPrefix(crt.Leaf.Subject.CommonName, "*")] = struct{}{}
-	for i := range crt.Leaf.DNSNames {
-		m[strings.TrimPrefix(crt.Leaf.DNSNames[i], "*")] = struct{}{}
+	m[strings.TrimPrefix(leaf.Subject.CommonName, "*")] = struct{}{}
+	for i := range leaf.DNSNames {
+		m[strings.TrimPrefix(leaf.DNSNames[i], "*")] = struct{}{}
 	}
 
 	gob.RegisterName("rsa.PublicKey", rsa.PublicKey{})
