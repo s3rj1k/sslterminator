@@ -1,11 +1,9 @@
 package main
 
 import (
-	"bytes"
-	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/gob"
+	"io/ioutil"
 	"log"
 	"os"
 	"strings"
@@ -30,7 +28,23 @@ func main() {
 		},
 	}
 
-	crt, err := tls.LoadX509KeyPair(os.Args[1], os.Args[2])
+	var (
+		certPEMBlock, keyPEMBlock []byte
+
+		err error
+	)
+
+	certPEMBlock, err = ioutil.ReadFile(os.Args[1])
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	keyPEMBlock, err = ioutil.ReadFile(os.Args[2])
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	crt, err := tls.X509KeyPair(certPEMBlock, keyPEMBlock)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -39,46 +53,26 @@ func main() {
 		log.Fatal(1)
 	}
 
-	var leaf *x509.Certificate
-
-	leaf, err = x509.ParseCertificate(crt.Certificate[0])
+	crt.Leaf, err = x509.ParseCertificate(crt.Certificate[0])
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	m := make(map[string]struct{})
 
-	m[strings.TrimPrefix(leaf.Subject.CommonName, "*")] = struct{}{}
-	for i := range leaf.DNSNames {
-		m[strings.TrimPrefix(leaf.DNSNames[i], "*")] = struct{}{}
-	}
-
-	gob.RegisterName("rsa.PublicKey", rsa.PublicKey{})
-	gob.RegisterName("rsa.PrivateKey", rsa.PrivateKey{})
-
-	var b bytes.Buffer
-	enc := gob.NewEncoder(&b)
-
-	if err := enc.Encode(crt); err != nil {
-		log.Fatal(err)
+	m[strings.TrimPrefix(crt.Leaf.Subject.CommonName, "*")] = struct{}{}
+	for i := range crt.Leaf.DNSNames {
+		m[strings.TrimPrefix(crt.Leaf.DNSNames[i], "*")] = struct{}{}
 	}
 
 	c := db.Get()
 	defer c.Close()
 
+	val := append(keyPEMBlock, certPEMBlock...)
+
 	for k := range m {
-		if err = c.Send("SET", k, b); err != nil {
+		if err = c.Send("SET", k, val); err != nil {
 			log.Fatal(err)
 		}
 	}
-
-	// var decCrt tls.Certificate
-
-	// dec := gob.NewDecoder(&b)
-	// err = dec.Decode(&decCrt)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	// spew.Dump(m, b, decCrt)
 }

@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bytes"
-	"crypto/rsa"
 	"crypto/tls"
-	"encoding/gob"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"io"
@@ -46,38 +44,50 @@ func init() {
 			)
 		},
 	}
+}
 
-	gob.RegisterName("rsa.PublicKey", rsa.PublicKey{})
-	gob.RegisterName("rsa.PrivateKey", rsa.PrivateKey{})
+func loadCertficateAndKey(data []byte) (tls.Certificate, error) {
+	certPEMBlock := make([]byte, 0, len(data))
+	keyPEMBlock := make([]byte, 0, len(data))
+
+	for {
+		block, rest := pem.Decode(data)
+		if block == nil {
+			break
+		}
+
+		if block.Type == "CERTIFICATE" {
+			certPEMBlock = append(certPEMBlock, block.Bytes...)
+		} else {
+			keyPEMBlock = append(keyPEMBlock, block.Bytes...)
+		}
+
+		data = rest
+	}
+
+	return tls.X509KeyPair(certPEMBlock, keyPEMBlock)
 }
 
 func getCertificate(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	c := db.Get()
 	defer c.Close()
 
-	crt := new(tls.Certificate)
 	exact := strings.ToLower(info.ServerName)
 	wildcard := reDomainPrefix.ReplaceAllString(exact, ".")
 
 	if data, err := redis.Bytes(
 		c.Do("GET", exact),
 	); err == nil && len(data) > 0 {
-		b := bytes.NewBuffer(data)
-
-		dec := gob.NewDecoder(b)
-		if err = dec.Decode(crt); err == nil {
-			return crt, nil
+		if crt, err := loadCertficateAndKey(data); err == nil {
+			return &crt, nil
 		}
 	}
 
 	if data, err := redis.Bytes(
 		c.Do("GET", wildcard),
 	); err == nil && len(data) > 0 {
-		b := bytes.NewBuffer(data)
-
-		dec := gob.NewDecoder(b)
-		if err = dec.Decode(crt); err == nil {
-			return crt, nil
+		if crt, err := loadCertficateAndKey(data); err == nil {
+			return &crt, nil
 		}
 	}
 
