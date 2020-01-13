@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"io/ioutil"
@@ -44,6 +45,9 @@ func main() {
 		log.Fatal(err)
 	}
 
+	certPEMBlock = bytes.TrimSpace(certPEMBlock)
+	keyPEMBlock = bytes.TrimSpace(keyPEMBlock)
+
 	crt, err := tls.X509KeyPair(certPEMBlock, keyPEMBlock)
 	if err != nil {
 		log.Fatal(err)
@@ -68,7 +72,7 @@ func main() {
 	c := db.Get()
 	defer c.Close()
 
-	keyPEMBlock = append(keyPEMBlock, []byte("\n")...)
+	keyPEMBlock = append(keyPEMBlock, []byte("\n\n")...)
 	val := append(keyPEMBlock, certPEMBlock...)
 
 	for k := range m {
