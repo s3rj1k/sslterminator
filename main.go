@@ -158,6 +158,7 @@ func main() {
 		Certificates:   nil,
 		GetCertificate: getCertificate,
 		MinVersion:     tls.VersionTLS12,
+		MaxVersion:     tls.VersionTLS12,
 	}
 
 	listener, err := tls.Listen("tcp", localAddress, &config)
