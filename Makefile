@@ -8,7 +8,7 @@ all: clean build
 
 build:
 	$(GO_BIN) mod tidy
-	$(ENV_BIN) CGO_ENABLED=1 GOOS=linux $(GO_BIN) build -ldflags '-s -w -extldflags "-static"' -o $(OUT_BIN) -v
+	$(ENV_BIN) CGO_ENABLED=1 GODEBUG=tls13=0 GOOS=linux $(GO_BIN) build -ldflags '-s -w -extldflags "-static"' -o $(OUT_BIN) -v
 
 update:
 	$(ENV_BIN) GOPROXY=direct GOPRIVATE=github.com/s3rj1k/* $(GO_BIN) get -u
