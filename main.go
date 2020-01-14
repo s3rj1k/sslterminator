@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"regexp"
@@ -120,6 +121,8 @@ func getCertificate(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
 }
 
 func main() {
+	log.SetOutput(ioutil.Discard) // to disable logging
+
 	reDomainPrefix = regexp.MustCompile(`^.*?\.`)
 
 	db = &redis.Pool{
@@ -154,11 +157,20 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// https://cipherli.st/
 	config := tls.Config{
 		Certificates:   nil,
 		GetCertificate: getCertificate,
-		MinVersion:     tls.VersionTLS12,
-		MaxVersion:     tls.VersionTLS12,
+
+		MinVersion: tls.VersionTLS12,
+		MaxVersion: tls.VersionTLS12,
+
+		CurvePreferences:         []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
+		PreferServerCipherSuites: true,
+		CipherSuites: []uint16{
+			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+		},
 	}
 
 	listener, err := tls.Listen("tcp", localAddress, &config)
